@@ -12,7 +12,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - MAX_FILE_SIZE_MB=50
-      - MAX_AUDIO_DURATION=300
+      - MAX_AUDIO_DURATION=500
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
