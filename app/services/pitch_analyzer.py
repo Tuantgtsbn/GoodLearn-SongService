@@ -54,16 +54,58 @@ class PitchAnalyzer:
             voiced_flag: boolean mask
             voiced_probs: xác suất voiced [0, 1]
         """
-        logger.debug("Đang trích xuất F0 bằng pyin...")
+        duration = len(y) / self.sr
+        logger.debug(f"Đang trích xuất F0 bằng pyin... (duration={duration:.1f}s, samples={len(y)})")
         try:
-            f0, voiced_flag, voiced_probs = librosa.pyin(
-                y,
-                fmin=self.fmin,
-                fmax=self.fmax,
-                sr=self.sr,
-                hop_length=self.hop_length,
-                fill_na=0.0,
-            )
+            # Xử lý theo từng chunk 10s để tránh OOM làm chết worker
+            CHUNK_SECONDS = 10
+            chunk_length = CHUNK_SECONDS * self.sr  # samples per chunk
+            
+            if len(y) <= chunk_length:
+                f0, voiced_flag, voiced_probs = librosa.pyin(
+                    y,
+                    fmin=self.fmin,
+                    fmax=self.fmax,
+                    sr=self.sr,
+                    hop_length=self.hop_length,
+                    fill_na=0.0,
+                )
+            else:
+                import gc
+                f0_list, voiced_flag_list, voiced_probs_list = [], [], []
+                total_chunks = (len(y) + chunk_length - 1) // chunk_length
+                
+                for idx, i in enumerate(range(0, len(y), chunk_length)):
+                    y_chunk = y[i:i + chunk_length]
+                    logger.debug(f"  pyin chunk {idx+1}/{total_chunks} ({len(y_chunk)/self.sr:.1f}s)")
+                    
+                    f0_c, voiced_flag_c, voiced_probs_c = librosa.pyin(
+                        y_chunk,
+                        fmin=self.fmin,
+                        fmax=self.fmax,
+                        sr=self.sr,
+                        hop_length=self.hop_length,
+                        fill_na=0.0,
+                    )
+                    
+                    f0_list.append(f0_c)
+                    voiced_flag_list.append(voiced_flag_c)
+                    voiced_probs_list.append(voiced_probs_c)
+                    
+                    # Giải phóng bộ nhớ sau mỗi chunk
+                    del y_chunk
+                    gc.collect()
+                
+                f0 = np.concatenate(f0_list)
+                voiced_flag = np.concatenate(voiced_flag_list)
+                voiced_probs = np.concatenate(voiced_probs_list)
+                
+                # Giải phóng lists
+                del f0_list, voiced_flag_list, voiced_probs_list
+                gc.collect()
+
+            logger.debug(f"Trích xuất F0 xong: {len(f0)} frames")
+
         except Exception as e:
             logger.warning(f"pyin thất bại, fallback về piptrack: {e}")
             f0, voiced_flag, voiced_probs = self._piptrack_fallback(y)
